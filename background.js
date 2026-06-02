@@ -34,6 +34,32 @@ function cacheSet(key, value) {
   cache.set(key, value);
 }
 
+// ─── Image resize (reduces Gemini input tokens) ───────────────────────────────
+
+async function resizeForGemini(b64, mimeType, maxDim = 1000) {
+  const blob    = await (await fetch(`data:${mimeType};base64,${b64}`)).blob();
+  const bitmap  = await createImageBitmap(blob);
+  const { width: sw, height: sh } = bitmap;
+
+  if (sw <= maxDim && sh <= maxDim) {
+    bitmap.close();
+    return { b64, mimeType };
+  }
+
+  const scale = maxDim / Math.max(sw, sh);
+  const oc  = new OffscreenCanvas(Math.round(sw * scale), Math.round(sh * scale));
+  oc.getContext('2d').drawImage(bitmap, 0, 0, oc.width, oc.height);
+  bitmap.close();
+
+  const resized = await oc.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve({ b64: reader.result.split(',')[1], mimeType: 'image/jpeg' });
+    reader.onerror = reject;
+    reader.readAsDataURL(resized);
+  });
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function getApiKey() {
@@ -109,7 +135,9 @@ async function handleTranslate(msg) {
     ({ b64, mimeType } = await fetchImageAsBase64(msg.src));
   }
 
-  const translations = await callGemini(b64, mimeType, apiKey);
+  // Resize for Gemini (saves tokens); original b64 returned for canvas rendering
+  const { b64: b64Small, mimeType: mimeSmall } = await resizeForGemini(b64, mimeType);
+  const translations = await callGemini(b64Small, mimeSmall, apiKey);
 
   if (Array.isArray(translations)) {
     cacheSet(cacheKey, { translations, b64, mimeType });

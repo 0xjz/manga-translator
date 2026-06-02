@@ -67,22 +67,29 @@ async function renderWithCanvas(el, translations, b64, mimeType) {
     const bw = ((xmax - xmin) / 1000) * nw;
     const bh = ((ymax - ymin) / 1000) * nh;
 
-    // Cover Japanese text with white
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(bx, by, bw, bh);
-
     // Detect orientation: tall & narrow → vertical (세로쓰기)
     const isVertical = bh > bw * 1.2;
     const fontSize   = fitFontSize(ctx, text, bw, bh, isVertical);
-    ctx.fillStyle    = '#111';
     ctx.font         = `${fontSize}px "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif`;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
 
+    // Measure actual Korean text size → minimal white fill
+    const { tw, th } = measureTextBounds(ctx, text, bw, bh, fontSize, isVertical);
+    const pad  = Math.max(3, fontSize * 0.25);
+    const fillW = Math.min(tw + pad * 2, bw);
+    const fillH = Math.min(th + pad * 2, bh);
+    const fillX = bx + (bw - fillW) / 2;
+    const fillY = by + (bh - fillH) / 2;
+
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(fillX, fillY, fillW, fillH);
+
+    ctx.fillStyle = '#111';
     if (isVertical) {
-      drawVertical(ctx, text, bx, by, bw, bh, fontSize);
+      drawVertical(ctx, text, fillX, fillY, fillW, fillH, fontSize);
     } else {
-      drawHorizontal(ctx, text, bx, by, bw, bh, fontSize);
+      drawHorizontal(ctx, text, fillX, fillY, fillW, fillH, fontSize);
     }
   }
 
@@ -93,6 +100,33 @@ async function renderWithCanvas(el, translations, b64, mimeType) {
   el.style.display = 'none';
   el.dataset.mangaDone = '1';
   elementCanvases.set(el, canvas);
+}
+
+// ─── Text measurement ────────────────────────────────────────────────────────
+
+function measureTextBounds(ctx, text, bw, bh, fontSize, isVertical) {
+  if (isVertical) {
+    const lineH   = fontSize * 1.35;
+    const charW   = fontSize * 1.1;
+    const maxRows = Math.max(1, Math.floor(bh / lineH));
+    const cols    = Math.ceil(text.length / maxRows);
+    return { tw: cols * charW, th: Math.min(text.length, maxRows) * lineH };
+  }
+  const lineH = fontSize * 1.4;
+  const maxW  = bw - fontSize * 0.4;
+  let line = '', lineCount = 0, maxMeasured = 0;
+  for (const ch of text) {
+    const test = line + ch;
+    if (ctx.measureText(test).width > maxW && line) {
+      maxMeasured = Math.max(maxMeasured, ctx.measureText(line).width);
+      lineCount++;
+      line = ch;
+    } else {
+      line = test;
+    }
+  }
+  if (line) { maxMeasured = Math.max(maxMeasured, ctx.measureText(line).width); lineCount++; }
+  return { tw: maxMeasured, th: lineCount * lineH };
 }
 
 // ─── Font sizing ──────────────────────────────────────────────────────────────
