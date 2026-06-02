@@ -1,0 +1,49 @@
+'use strict';
+
+const toggle    = document.getElementById('toggle');
+const apiKeyEl  = document.getElementById('apiKey');
+const statusEl  = document.getElementById('status');
+
+// ─── Load persisted state ─────────────────────────────────────────────────────
+
+chrome.storage.local.get(['mangaMode', 'geminiApiKey'], ({ mangaMode, geminiApiKey }) => {
+  toggle.checked = !!mangaMode;
+  if (geminiApiKey) apiKeyEl.value = geminiApiKey;
+});
+
+// ─── Toggle ───────────────────────────────────────────────────────────────────
+
+toggle.addEventListener('change', () => {
+  const active = toggle.checked;
+
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    if (!tab?.id) return;
+    chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE', active }, (res) => {
+      if (chrome.runtime.lastError) {
+        showStatus('페이지를 새로고침 후 다시 시도하세요.', true);
+        toggle.checked = !active; // revert
+      }
+    });
+  });
+});
+
+// ─── API Key ──────────────────────────────────────────────────────────────────
+
+let saveTimer;
+apiKeyEl.addEventListener('input', () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const key = apiKeyEl.value.trim();
+    chrome.storage.local.set({ geminiApiKey: key });
+    showStatus(key ? 'API 키 저장됨.' : 'API 키가 삭제되었습니다.');
+  }, 600);
+});
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function showStatus(msg, isError = false) {
+  statusEl.textContent = msg;
+  statusEl.style.color = isError ? '#dc2626' : '#4f46e5';
+  clearTimeout(showStatus._t);
+  showStatus._t = setTimeout(() => { statusEl.textContent = ''; }, 3000);
+}

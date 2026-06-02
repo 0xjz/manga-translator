@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Manga OCR Translator",
+  "version": "1.0.0",
+  "description": "일본 망가의 말풍선 텍스트를 Gemini AI로 한국어 번역",
+
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Manga OCR Translator"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "commands": {
+    "toggle-manga-mode": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "망가 번역 모드 ON/OFF"
+    }
+  }
+}
