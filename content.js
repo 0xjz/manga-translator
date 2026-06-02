@@ -199,13 +199,11 @@ function clearAll() {
 
 function activate() {
   isActive = true;
-  chrome.storage.local.set({ mangaMode: true });
   setupObservers();
 }
 
 function deactivate() {
   isActive = false;
-  chrome.storage.local.set({ mangaMode: false });
   teardownObservers();
   clearAll();
 }
@@ -233,8 +231,3 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
-// ─── Init: restore persisted mode ────────────────────────────────────────────
-
-chrome.storage.local.get('mangaMode', ({ mangaMode }) => {
-  if (mangaMode) activate();
-});

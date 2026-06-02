@@ -6,9 +6,17 @@ const statusEl  = document.getElementById('status');
 
 // ─── Load persisted state ─────────────────────────────────────────────────────
 
-chrome.storage.local.get(['mangaMode', 'geminiApiKey'], ({ mangaMode, geminiApiKey }) => {
-  toggle.checked = !!mangaMode;
+chrome.storage.local.get(['geminiApiKey'], ({ geminiApiKey }) => {
   if (geminiApiKey) apiKeyEl.value = geminiApiKey;
+});
+
+// Toggle 상태는 현재 탭에서 직접 조회 (탭마다 독립적)
+chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+  if (!tab?.id) return;
+  chrome.tabs.sendMessage(tab.id, { type: 'GET_STATUS' }, (res) => {
+    if (chrome.runtime.lastError) return;
+    toggle.checked = !!res?.isActive;
+  });
 });
 
 // ─── Toggle ───────────────────────────────────────────────────────────────────

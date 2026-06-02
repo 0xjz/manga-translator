@@ -3,7 +3,7 @@
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const GEMINI_URL =
-  'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent';
+  'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-lite:generateContent';
 
 const SYSTEM_PROMPT =
   'You are an expert Japanese-to-Korean Manga translator and OCR engine.\n' +
