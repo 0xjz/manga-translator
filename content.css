@@ -1,27 +1,5 @@
-/* Overlay: speech bubble mask + Korean text */
-.manga-overlay {
-  position: absolute;
-  background: #fff;
-  color: #111;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
-  font-weight: 500;
-  line-height: 1.35;
-  padding: 2px 3px;
-  box-sizing: border-box;
-  z-index: 2147483647;
-  overflow: hidden;
-  word-break: keep-all;
-  pointer-events: none;
-  border-radius: 2px;
-}
-
-/* Wrapper injected around each translated image */
-div[data-manga-wrapper] {
-  display: block;
-  position: relative;
-  line-height: 0;
+/* Canvas rendered by manga translator - aspect ratio handled via canvas intrinsic size */
+canvas.manga-canvas {
+  max-width: 100%;
+  height: auto;
 }

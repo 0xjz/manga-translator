@@ -6,13 +6,11 @@ let isActive = false;
 let intersectionObserver = null;
 let mutationObserver = null;
 
-/** Keys of images already sent for translation (img.src or canvas id). */
 const processedKeys = new Set();
+// el -> rendered canvas (for cleanup)
+const elementCanvases = new WeakMap();
 
-/** Stores raw translation data per element so overlays can be redrawn on resize. */
-const imageTranslations = new WeakMap();
-
-// ─── Size filter (Rule A-2) ───────────────────────────────────────────────────
+// ─── Size filter ──────────────────────────────────────────────────────────────
 
 function isEligibleElement(el) {
   let w, h;
@@ -28,75 +26,128 @@ function isEligibleElement(el) {
   return (w >= 500 && h >= 500) || w * h >= 250_000;
 }
 
-// ─── Overlay rendering (Rule C) ───────────────────────────────────────────────
+// ─── Canvas rendering ─────────────────────────────────────────────────────────
 
-/**
- * Wraps an <img> in a position:relative div so overlays always reference the
- * image's own coordinate space, regardless of the surrounding page layout.
- */
-function ensureWrapper(img) {
-  if (img.parentElement?.dataset.mangaWrapper) return img.parentElement;
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-  const wrapper = document.createElement('div');
-  wrapper.dataset.mangaWrapper = '1';
-  // Preserve block vs inline-block so the page layout stays intact
-  const display = getComputedStyle(img).display;
-  wrapper.style.display = display === 'inline' ? 'inline-block' : display || 'block';
-  img.parentNode.insertBefore(wrapper, img);
-  wrapper.appendChild(img);
-  return wrapper;
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload  = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
 }
 
-function renderOverlays(el, translations) {
-  // Canvas elements: make the existing parent relative (wrapping breaks canvas APIs)
-  let container;
-  if (el.tagName === 'CANVAS') {
-    container = el.parentElement;
-    if (getComputedStyle(container).position === 'static') {
-      container.style.position = 'relative';
-    }
-  } else {
-    container = ensureWrapper(el);
-  }
+/**
+ * Replaces el (img or canvas) with a canvas that has:
+ *   - the full original image drawn at natural resolution
+ *   - each speech bubble filled white (Japanese text covered)
+ *   - Korean text drawn directly onto the canvas
+ */
+async function renderWithCanvas(el, translations, b64, mimeType) {
+  const srcImg = await loadImage(`data:${mimeType};base64,${b64}`);
 
-  container.querySelectorAll('.manga-overlay').forEach(o => o.remove());
-  if (!translations.length) return;
+  const nw = srcImg.naturalWidth;
+  const nh = srcImg.naturalHeight;
 
-  const w = el.offsetWidth;
-  const h = el.offsetHeight;
-  // For canvas: overlays sit at el.offsetLeft/Top within the container
-  const baseX = el.tagName === 'CANVAS' ? el.offsetLeft : 0;
-  const baseY = el.tagName === 'CANVAS' ? el.offsetTop  : 0;
+  const canvas = document.createElement('canvas');
+  canvas.className = 'manga-canvas';
+  canvas.width  = nw;
+  canvas.height = nh;
+
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(srcImg, 0, 0);
 
   for (const { box_2d, text } of translations) {
     const [ymin, xmin, ymax, xmax] = box_2d;
 
-    const left   = baseX + (xmin / 1000) * w;
-    const top    = baseY + (ymin / 1000) * h;
-    const width  = ((xmax - xmin) / 1000) * w;
-    const height = ((ymax - ymin) / 1000) * h;
+    const bx = (xmin / 1000) * nw;
+    const by = (ymin / 1000) * nh;
+    const bw = ((xmax - xmin) / 1000) * nw;
+    const bh = ((ymax - ymin) / 1000) * nh;
 
-    // Scale font to ~25 % of box height, clamped to a readable range
-    const fontSize = Math.max(9, Math.min(16, Math.floor(height * 0.25)));
+    // Cover Japanese text with white
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(bx, by, bw, bh);
 
-    const div = document.createElement('div');
-    div.className = 'manga-overlay';
-    div.textContent = text;
-    div.style.left     = `${left}px`;
-    div.style.top      = `${top}px`;
-    div.style.width    = `${width}px`;
-    div.style.height   = `${height}px`;
-    div.style.fontSize = `${fontSize}px`;
-    container.appendChild(div);
+    // Detect orientation: tall & narrow → vertical (세로쓰기)
+    const isVertical = bh > bw * 1.2;
+    const fontSize   = fitFontSize(ctx, text, bw, bh, isVertical);
+    ctx.fillStyle    = '#111';
+    ctx.font         = `${fontSize}px "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+
+    if (isVertical) {
+      drawVertical(ctx, text, bx, by, bw, bh, fontSize);
+    } else {
+      drawHorizontal(ctx, text, bx, by, bw, bh, fontSize);
+    }
   }
+
+  // CSS: behave exactly like the original img (auto aspect-ratio via canvas intrinsic size)
+  canvas.style.cssText = `max-width:100%;height:auto;display:${getComputedStyle(el).display || 'block'};`;
+
+  el.insertAdjacentElement('beforebegin', canvas);
+  el.style.display = 'none';
+  el.dataset.mangaDone = '1';
+  elementCanvases.set(el, canvas);
 }
 
-/** Redraws all overlays after a window resize. */
-function rerenderAll() {
-  document.querySelectorAll('[data-manga-done]').forEach(el => {
-    const t = imageTranslations.get(el);
-    if (t) renderOverlays(el, t);
+// ─── Font sizing ──────────────────────────────────────────────────────────────
+
+function fitFontSize(ctx, text, bw, bh, isVertical) {
+  if (isVertical) {
+    // Single char column: font ≈ column width
+    return clamp(Math.floor(bw * 0.72), 11, 44);
+  }
+  // Start from area estimate, then shrink until text fits one line or wraps acceptably
+  const areaGuess = Math.floor(Math.sqrt((bw * bh) / Math.max(text.length, 1)) * 1.15);
+  return clamp(areaGuess, 11, 44);
+}
+
+// ─── Vertical text (manga 세로쓰기, columns RTL) ──────────────────────────────
+
+function drawVertical(ctx, text, bx, by, bw, bh, fontSize) {
+  const lineH = fontSize * 1.35;
+  const charW = fontSize * 1.1;
+  const maxRows = Math.max(1, Math.floor(bh / lineH));
+
+  // First column at the right edge, subsequent columns to the left
+  const startX = bx + bw - charW * 0.5;
+
+  [...text].forEach((ch, i) => {
+    const col = Math.floor(i / maxRows);
+    const row = i % maxRows;
+    const x = startX - col * charW;
+    if (x < bx) return; // overflow guard
+    ctx.fillText(ch, x, by + lineH * row + lineH * 0.5);
   });
+}
+
+// ─── Horizontal text with character-level wrapping ────────────────────────────
+
+function drawHorizontal(ctx, text, bx, by, bw, bh, fontSize) {
+  const lineH  = fontSize * 1.4;
+  const maxW   = bw - fontSize * 0.4;
+  const lines  = [];
+  let   line   = '';
+
+  for (const ch of text) {
+    const test = line + ch;
+    if (ctx.measureText(test).width > maxW && line) {
+      lines.push(line);
+      line = ch;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+
+  const totalH = lines.length * lineH;
+  const startY = by + (bh - totalH) / 2 + lineH * 0.5;
+  lines.forEach((l, i) => ctx.fillText(l, bx + bw / 2, startY + i * lineH));
 }
 
 // ─── Processing pipeline ──────────────────────────────────────────────────────
@@ -111,40 +162,40 @@ function getKey(el) {
 
 async function processElement(el) {
   if (!isActive || !isEligibleElement(el)) return;
+  if (el.style.display === 'none') return; // already replaced
 
   const key = getKey(el);
   if (!key || processedKeys.has(key)) return;
   processedKeys.add(key);
 
+  let localB64 = null;
   let msg;
+
   if (el.tagName === 'CANVAS') {
     try {
-      const b64 = el.toDataURL('image/jpeg', 0.85).split(',')[1];
-      msg = { type: 'TRANSLATE_B64', b64, mimeType: 'image/jpeg', src: key };
+      localB64 = el.toDataURL('image/jpeg', 0.85).split(',')[1];
+      msg = { type: 'TRANSLATE_B64', b64: localB64, mimeType: 'image/jpeg', src: key };
     } catch {
-      // Canvas is tainted (cross-origin); nothing we can do from content script
       processedKeys.delete(key);
       return;
     }
   } else {
-    // Send URL to background.js which fetches without CORS restriction
     msg = { type: 'TRANSLATE_URL', src: key };
   }
 
   try {
     const res = await chrome.runtime.sendMessage(msg);
     if (res?.translations?.length) {
-      imageTranslations.set(el, res.translations);
-      renderOverlays(el, res.translations);
-      el.dataset.mangaDone = '1';
+      const b64      = res.b64      ?? localB64;
+      const mimeType = res.mimeType ?? 'image/jpeg';
+      if (b64) await renderWithCanvas(el, res.translations, b64, mimeType);
     }
   } catch {
-    // Message channel closed or background not ready — allow retry later
     processedKeys.delete(key);
   }
 }
 
-// ─── Observers (Rule A-3) ─────────────────────────────────────────────────────
+// ─── Observers ────────────────────────────────────────────────────────────────
 
 function tryObserve(el) {
   if (!isEligibleElement(el)) return;
@@ -160,14 +211,11 @@ function tryObserve(el) {
 function setupObservers() {
   intersectionObserver = new IntersectionObserver(
     entries => entries.forEach(e => { if (e.isIntersecting) processElement(e.target); }),
-    // 300 px pre-load margin: start fetching just before the image enters the viewport
     { rootMargin: '300px 0px', threshold: 0.01 }
   );
 
-  // Seed with images already in the DOM
   document.querySelectorAll('img, canvas').forEach(tryObserve);
 
-  // Watch for images injected by the page after initial load (lazy-loading manga readers)
   mutationObserver = new MutationObserver(mutations => {
     for (const m of mutations) {
       for (const node of m.addedNodes) {
@@ -188,14 +236,16 @@ function teardownObservers() {
 }
 
 function clearAll() {
-  document.querySelectorAll('.manga-overlay').forEach(o => o.remove());
   document.querySelectorAll('[data-manga-done]').forEach(el => {
+    el.style.display = '';
     delete el.dataset.mangaDone;
+    elementCanvases.get(el)?.remove();
   });
+  document.querySelectorAll('.manga-canvas').forEach(c => c.remove());
   processedKeys.clear();
 }
 
-// ─── Activation / deactivation ────────────────────────────────────────────────
+// ─── Activation ───────────────────────────────────────────────────────────────
 
 function activate() {
   isActive = true;
@@ -208,16 +258,7 @@ function deactivate() {
   clearAll();
 }
 
-// ─── Resize: reposition overlays ─────────────────────────────────────────────
-
-let resizeTimer;
-window.addEventListener('resize', () => {
-  if (!isActive) return;
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(rerenderAll, 200);
-});
-
-// ─── Message listener (popup + background command relay) ──────────────────────
+// ─── Messages ─────────────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'TOGGLE') {
@@ -230,4 +271,3 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return false;
   }
 });
-

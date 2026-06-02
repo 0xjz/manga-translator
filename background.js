@@ -20,9 +20,10 @@ const SYSTEM_PROMPT =
   'box_2d coordinates are normalized integers from 0 to 1000 representing the ' +
   'bounding box of each speech bubble relative to the full image dimensions.';
 
-const CACHE_MAX = 200;
+// Smaller limit since each entry now includes b64 image data
+const CACHE_MAX = 50;
 
-// ─── In-memory cache (cleared when service worker restarts) ──────────────────
+// ─── In-memory cache ──────────────────────────────────────────────────────────
 
 const cache = new Map();
 
@@ -79,7 +80,6 @@ async function callGemini(b64, mimeType, apiKey) {
 
   const data = await res.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-  // Strip accidental markdown fences the model sometimes adds despite the prompt
   const clean = text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
 
   const parsed = JSON.parse(clean);
@@ -93,7 +93,9 @@ async function handleTranslate(msg) {
   const cacheKey = msg.src;
 
   if (cache.has(cacheKey)) {
-    return { translations: cache.get(cacheKey), cached: true };
+    // Return cached b64 so content.js can redraw canvas if needed
+    const { translations, b64, mimeType } = cache.get(cacheKey);
+    return { translations, b64, mimeType, cached: true };
   }
 
   const apiKey = await getApiKey();
@@ -108,8 +110,16 @@ async function handleTranslate(msg) {
   }
 
   const translations = await callGemini(b64, mimeType, apiKey);
-  cacheSet(cacheKey, translations);
-  return { translations };
+
+  if (Array.isArray(translations)) {
+    cacheSet(cacheKey, { translations, b64, mimeType });
+  }
+
+  return {
+    translations: Array.isArray(translations) ? translations : [],
+    b64,
+    mimeType,
+  };
 }
 
 // ─── Message listener ─────────────────────────────────────────────────────────
@@ -121,7 +131,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     .then(sendResponse)
     .catch(err => sendResponse({ translations: [], error: err.message }));
 
-  return true; // keep the message channel open for the async response
+  return true;
 });
 
 // ─── Keyboard shortcut relay ──────────────────────────────────────────────────
@@ -132,7 +142,6 @@ chrome.commands.onCommand.addListener(async (command) => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return;
 
-  // Ask the content script for the current state, then flip it
   chrome.tabs.sendMessage(tab.id, { type: 'GET_STATUS' }, (res) => {
     if (chrome.runtime.lastError) return;
     chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE', active: !res?.isActive });
