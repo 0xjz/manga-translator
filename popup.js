@@ -1,13 +1,15 @@
 'use strict';
 
-const toggle    = document.getElementById('toggle');
-const apiKeyEl  = document.getElementById('apiKey');
-const statusEl  = document.getElementById('status');
+const toggle          = document.getElementById('toggle');
+const apiKeyEl        = document.getElementById('apiKey');
+const inpaintServerEl = document.getElementById('inpaintServer');
+const statusEl        = document.getElementById('status');
 
 // ─── Load persisted state ─────────────────────────────────────────────────────
 
-chrome.storage.local.get(['geminiApiKey'], ({ geminiApiKey }) => {
-  if (geminiApiKey) apiKeyEl.value = geminiApiKey;
+chrome.storage.local.get(['geminiApiKey', 'inpaintServerUrl'], ({ geminiApiKey, inpaintServerUrl }) => {
+  if (geminiApiKey)    apiKeyEl.value        = geminiApiKey;
+  if (inpaintServerUrl) inpaintServerEl.value = inpaintServerUrl;
 });
 
 // Toggle 상태는 현재 탭에서 직접 조회 (탭마다 독립적)
@@ -44,6 +46,18 @@ apiKeyEl.addEventListener('input', () => {
     const key = apiKeyEl.value.trim();
     chrome.storage.local.set({ geminiApiKey: key });
     showStatus(key ? 'API 키 저장됨.' : 'API 키가 삭제되었습니다.');
+  }, 600);
+});
+
+// ─── Inpaint Server URL ───────────────────────────────────────────────────────
+
+let serverTimer;
+inpaintServerEl.addEventListener('input', () => {
+  clearTimeout(serverTimer);
+  serverTimer = setTimeout(() => {
+    const url = inpaintServerEl.value.trim().replace(/\/$/, '');
+    chrome.storage.local.set({ inpaintServerUrl: url || null });
+    showStatus(url ? '서버 URL 저장됨.' : '인페인트 서버 해제됨.');
   }, 600);
 });
 

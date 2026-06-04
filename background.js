@@ -60,6 +60,69 @@ async function resizeForGemini(b64, mimeType, maxDim = 1000) {
   });
 }
 
+// ─── Inpaint via iopaint server ───────────────────────────────────────────────
+
+async function getInpaintServerUrl() {
+  const { inpaintServerUrl } = await chrome.storage.local.get('inpaintServerUrl');
+  return inpaintServerUrl || null;
+}
+
+/**
+ * Creates a mask PNG (black bg, white where text should be removed)
+ * from normalized box_2d coordinates and the original image dimensions.
+ */
+async function createMaskBlob(b64, mimeType, translations) {
+  const blob   = await (await fetch(`data:${mimeType};base64,${b64}`)).blob();
+  const bitmap = await createImageBitmap(blob);
+  const { width: w, height: h } = bitmap;
+  bitmap.close();
+
+  const oc  = new OffscreenCanvas(w, h);
+  const ctx = oc.getContext('2d');
+
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.fillStyle = 'white';
+  for (const { box_2d } of translations) {
+    const [ymin, xmin, ymax, xmax] = box_2d;
+    ctx.fillRect(
+      (xmin / 1000) * w,
+      (ymin / 1000) * h,
+      ((xmax - xmin) / 1000) * w,
+      ((ymax - ymin) / 1000) * h,
+    );
+  }
+
+  return oc.convertToBlob({ type: 'image/png' });
+}
+
+async function runInpaint(b64, mimeType, translations, serverUrl) {
+  const [imageBlob, maskBlob] = await Promise.all([
+    (await fetch(`data:${mimeType};base64,${b64}`)).blob(),
+    createMaskBlob(b64, mimeType, translations),
+  ]);
+
+  const form = new FormData();
+  form.append('image', imageBlob, 'image.png');
+  form.append('mask',  maskBlob,  'mask.png');
+
+  const res = await fetch(`${serverUrl}/api/v1/inpaint`, {
+    method: 'POST',
+    body: form,
+  });
+
+  if (!res.ok) throw new Error(`Inpaint server ${res.status}: ${await res.text().catch(() => '')}`);
+
+  const resultBlob = await res.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve({ b64: reader.result.split(',')[1], mimeType: 'image/png' });
+    reader.onerror = reject;
+    reader.readAsDataURL(resultBlob);
+  });
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function getApiKey() {
@@ -135,18 +198,31 @@ async function handleTranslate(msg) {
     ({ b64, mimeType } = await fetchImageAsBase64(msg.src));
   }
 
-  // Resize for Gemini (saves tokens); original b64 returned for canvas rendering
+  // Resize for Gemini (saves tokens); original b64 kept for canvas rendering
   const { b64: b64Small, mimeType: mimeSmall } = await resizeForGemini(b64, mimeType);
   const translations = await callGemini(b64Small, mimeSmall, apiKey);
 
+  // If iopaint server is configured, remove original text from image
+  let renderB64   = b64;
+  let renderMime  = mimeType;
+  const serverUrl = await getInpaintServerUrl();
+  if (serverUrl && Array.isArray(translations) && translations.length > 0) {
+    try {
+      ({ b64: renderB64, mimeType: renderMime } = await runInpaint(b64, mimeType, translations, serverUrl));
+    } catch (err) {
+      // Inpaint 실패 시 원본 이미지로 폴백 (흰 박스 방식)
+      console.warn('Inpaint failed, falling back to original:', err.message);
+    }
+  }
+
   if (Array.isArray(translations)) {
-    cacheSet(cacheKey, { translations, b64, mimeType });
+    cacheSet(cacheKey, { translations, b64: renderB64, mimeType: renderMime });
   }
 
   return {
     translations: Array.isArray(translations) ? translations : [],
-    b64,
-    mimeType,
+    b64: renderB64,
+    mimeType: renderMime,
   };
 }
 
