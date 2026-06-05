@@ -15,8 +15,14 @@ const elementCanvases = new WeakMap();
 function isEligibleElement(el) {
   let w, h;
   if (el.tagName === 'IMG') {
-    w = el.naturalWidth  || el.offsetWidth;
-    h = el.naturalHeight || el.offsetHeight;
+    // 화면에 실제로 표시되는 크기가 작으면 로고/썸네일로 판단해 제외
+    const dw = el.offsetWidth;
+    const dh = el.offsetHeight;
+    if (dw > 0 && dw < 300) return false;
+    if (dh > 0 && dh < 300) return false;
+
+    w = el.naturalWidth  || dw;
+    h = el.naturalHeight || dh;
   } else if (el.tagName === 'CANVAS') {
     w = el.width;
     h = el.height;
