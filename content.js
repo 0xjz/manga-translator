@@ -76,9 +76,10 @@ async function renderWithCanvas(el, translations, b64, mimeType) {
     // Detect orientation: tall & narrow → vertical (세로쓰기)
     const isVertical = bh > bw * 1.2;
     const fontSize   = fitFontSize(ctx, text, bw, bh, isVertical);
-    ctx.font         = `${fontSize}px "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.font          = `${fontSize}px "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif`;
+    ctx.letterSpacing = '-0.3px';
+    ctx.textAlign     = 'center';
+    ctx.textBaseline  = 'middle';
 
     // Measure actual Korean text size → minimal white fill
     const { tw, th } = measureTextBounds(ctx, text, bw, bh, fontSize, isVertical);
@@ -140,13 +141,31 @@ function measureTextBounds(ctx, text, bw, bh, fontSize, isVertical) {
 // ─── Font sizing ──────────────────────────────────────────────────────────────
 
 function fitFontSize(ctx, text, bw, bh, isVertical) {
+  const MIN = 9, MAX = 24;
+
   if (isVertical) {
-    // Single char column: font ≈ column width
-    return clamp(Math.floor(bw * 0.72), 11, 44);
+    return clamp(Math.floor(bw * 0.55), MIN, MAX);
   }
-  // Start from area estimate, then shrink until text fits one line or wraps acceptably
-  const areaGuess = Math.floor(Math.sqrt((bw * bh) / Math.max(text.length, 1)) * 1.15);
-  return clamp(areaGuess, 11, 44);
+
+  // 면적 기반 초기 추정 (보수적으로 0.8배)
+  let size = clamp(Math.floor(Math.sqrt((bw * bh) / Math.max(text.length, 1)) * 0.8), MIN, MAX);
+  const maxW = bw - 4;
+
+  // 실제로 텍스트가 박스 높이 안에 들어올 때까지 축소
+  for (; size >= MIN; size--) {
+    ctx.font         = `${size}px sans-serif`;
+    ctx.letterSpacing = '-0.3px';
+    const lineH = size * 1.2;
+    let line = '', lineCount = 0;
+    for (const ch of text) {
+      const test = line + ch;
+      if (ctx.measureText(test).width > maxW && line) { lineCount++; line = ch; }
+      else line = test;
+    }
+    if (line) lineCount++;
+    if (lineCount * lineH <= bh) break;
+  }
+  return Math.max(size, MIN);
 }
 
 // ─── Vertical text (manga 세로쓰기, columns RTL) ──────────────────────────────
@@ -171,8 +190,9 @@ function drawVertical(ctx, text, bx, by, bw, bh, fontSize) {
 // ─── Horizontal text with character-level wrapping ────────────────────────────
 
 function drawHorizontal(ctx, text, bx, by, bw, bh, fontSize) {
-  const lineH  = fontSize * 1.4;
-  const maxW   = bw - fontSize * 0.4;
+  ctx.letterSpacing = '-0.3px';
+  const lineH  = fontSize * 1.2;
+  const maxW   = bw - 4;
   const lines  = [];
   let   line   = '';
 
