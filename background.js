@@ -219,6 +219,12 @@ async function handleTranslate(msg) {
   const { b64: b64Small, mimeType: mimeSmall } = await resizeForGemini(b64, mimeType);
   const translations = await callGemini(b64Small, mimeSmall, apiKey);
 
+  // overlayMode: canvas 기반 사이트에서 overlay만 그리므로 iopaint 불필요
+  if (msg.overlayMode) {
+    if (Array.isArray(translations)) cacheSet(cacheKey, { translations });
+    return { translations: Array.isArray(translations) ? translations : [] };
+  }
+
   // If iopaint server is configured, remove original text from image
   let renderB64   = b64;
   let renderMime  = mimeType;

@@ -9,6 +9,13 @@ let mutationObserver = null;
 const processedKeys = new Set();
 // el -> rendered canvas (for cleanup)
 const elementCanvases = new WeakMap();
+// canvas element -> key (canvas를 수정하지 않고 식별하기 위한 WeakMap)
+const canvasKeys = new WeakMap();
+
+function getCanvasKey(el) {
+  if (!canvasKeys.has(el)) canvasKeys.set(el, `canvas::${crypto.randomUUID().slice(0, 8)}`);
+  return canvasKeys.get(el);
+}
 
 // ─── Size filter ──────────────────────────────────────────────────────────────
 
@@ -219,6 +226,86 @@ function drawHorizontal(ctx, text, bx, by, bw, bh, fontSize) {
   lines.forEach((l, i) => ctx.fillText(l, bx + bw / 2, startY + i * lineH));
 }
 
+// ─── Canvas overlay (canvas 기반 망가 리더용) ─────────────────────────────────
+
+function renderCanvasOverlay(sourceCanvas, translations) {
+  // 기존 overlay 제거
+  sourceCanvas.parentElement?.querySelectorAll('.manga-overlay').forEach(o => o.remove());
+
+  const overlay = document.createElement('canvas');
+  overlay.className   = 'manga-canvas manga-overlay';
+  overlay.dataset.mangaCanvas = '1';
+  overlay.width       = sourceCanvas.width;
+  overlay.height      = sourceCanvas.height;
+  overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;';
+
+  const ctx = overlay.getContext('2d');
+  const nw  = sourceCanvas.width;
+  const nh  = sourceCanvas.height;
+
+  for (const { box_2d, text } of translations) {
+    const [ymin, xmin, ymax, xmax] = box_2d;
+    const bx = (xmin / 1000) * nw;
+    const by = (ymin / 1000) * nh;
+    const bw = ((xmax - xmin) / 1000) * nw;
+    const bh = ((ymax - ymin) / 1000) * nh;
+
+    const fontSize = fitFontSize(ctx, text, bw, bh, false);
+    ctx.font          = `${fontSize}px "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif`;
+    ctx.letterSpacing = '-0.3px';
+    ctx.textAlign     = 'center';
+    ctx.textBaseline  = 'middle';
+
+    const { tw, th } = measureTextBounds(ctx, text, bw, bh, fontSize, false);
+    const pad   = Math.max(3, fontSize * 0.25);
+    const fillW = Math.min(tw + pad * 2, bw);
+    const fillH = Math.min(th + pad * 2, bh);
+    const fillX = bx + (bw - fillW) / 2;
+    const fillY = by + (bh - fillH) / 2;
+
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(fillX, fillY, fillW, fillH);
+    ctx.fillStyle = '#111';
+    drawHorizontal(ctx, text, fillX, fillY, fillW, fillH, fontSize);
+  }
+
+  const container = sourceCanvas.parentElement;
+  if (container && getComputedStyle(container).position === 'static') {
+    container.style.position = 'relative';
+  }
+  sourceCanvas.insertAdjacentElement('afterend', overlay);
+}
+
+async function processCanvasElement(canvas) {
+  if (!isActive) return;
+  if (canvas.dataset.mangaCanvas) return; // 우리가 만든 overlay
+
+  const key = getCanvasKey(canvas);
+  if (processedKeys.has(key)) return;
+  processedKeys.add(key);
+
+  let b64;
+  try {
+    b64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+  } catch {
+    // CORS로 tainted된 canvas — 읽기 불가
+    processedKeys.delete(key);
+    return;
+  }
+
+  try {
+    const res = await chrome.runtime.sendMessage({
+      type: 'TRANSLATE_B64', b64, mimeType: 'image/jpeg', src: key,
+      overlayMode: true, // iopaint 생략 요청
+    });
+    if (res?.translations?.length) {
+      renderCanvasOverlay(canvas, res.translations);
+    }
+  } catch {
+    processedKeys.delete(key);
+  }
+}
+
 // ─── Processing pipeline ──────────────────────────────────────────────────────
 
 function getKey(el) {
@@ -277,15 +364,30 @@ function setupObservers() {
 
   mutationObserver = new MutationObserver(mutations => {
     for (const m of mutations) {
-      for (const node of m.addedNodes) {
-        if (node.nodeType !== Node.ELEMENT_NODE) continue;
-        if (node.matches('img')) tryObserve(node);
-        node.querySelectorAll?.('img').forEach(tryObserve);
+      // img 추가 감지 (img 기반 사이트)
+      if (m.type === 'childList') {
+        for (const node of m.addedNodes) {
+          if (node.nodeType !== Node.ELEMENT_NODE) continue;
+          if (node.matches('img')) tryObserve(node);
+          node.querySelectorAll?.('img').forEach(tryObserve);
+        }
+      }
+      // class 변경 감지 — "mode-loaded" 등 canvas 로딩 완료 신호 (canvas 기반 사이트)
+      if (m.type === 'attributes' && m.attributeName === 'class') {
+        const el = m.target;
+        if (el.classList.contains('mode-loaded') || el.classList.contains('loaded')) {
+          el.querySelectorAll('canvas:not([data-manga-canvas])').forEach(processCanvasElement);
+        }
       }
     }
   });
 
-  mutationObserver.observe(document.documentElement, { childList: true, subtree: true });
+  mutationObserver.observe(document.documentElement, {
+    childList:       true,
+    subtree:         true,
+    attributes:      true,
+    attributeFilter: ['class'],
+  });
 }
 
 function teardownObservers() {
