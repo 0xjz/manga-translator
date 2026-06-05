@@ -393,8 +393,11 @@ function setupObservers() {
         const el = m.target;
         if (el.classList.contains('mode-loaded') || el.classList.contains('loaded')) {
           el.querySelectorAll('canvas:not([data-manga-canvas])').forEach(canvas => {
-            // 같은 canvas 요소가 재사용될 때(페이지 이동)도 재처리하도록 키 초기화
-            processedKeys.delete(getCanvasKey(canvas));
+            // 캐시 키 완전 초기화: 같은 canvas 재사용 시 background.js 캐시도 우회
+            if (canvasKeys.has(canvas)) {
+              processedKeys.delete(canvasKeys.get(canvas));
+              canvasKeys.delete(canvas); // 새 UUID 생성 강제 → 새 캐시 키
+            }
             canvas.parentElement?.querySelectorAll('.manga-overlay').forEach(o => o.remove());
             processCanvasElement(canvas);
           });
