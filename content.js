@@ -108,6 +108,20 @@ async function renderWithCanvas(el, translations, b64, mimeType) {
   el.style.display = 'none';
   el.dataset.mangaDone = '1';
   elementCanvases.set(el, canvas);
+
+  // 망가 리더가 src를 바꿔 다음 페이지를 로드할 경우 캔버스를 제거하고 img 복원
+  const srcWatcher = new MutationObserver(() => {
+    srcWatcher.disconnect();
+    canvas.remove();
+    el.style.display = '';
+    delete el.dataset.mangaDone;
+    processedKeys.delete(el.currentSrc || el.src);
+    delete el.dataset.mangaId;
+    el.addEventListener('load', () => {
+      if (isActive && isEligibleElement(el)) intersectionObserver?.observe(el);
+    }, { once: true });
+  });
+  srcWatcher.observe(el, { attributes: true, attributeFilter: ['src', 'srcset'] });
 }
 
 // ─── Text measurement ────────────────────────────────────────────────────────

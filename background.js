@@ -182,9 +182,9 @@ async function handleTranslate(msg) {
   const cacheKey = msg.src;
 
   if (cache.has(cacheKey)) {
-    // Return cached b64 so content.js can redraw canvas if needed
-    const { translations, b64, mimeType } = cache.get(cacheKey);
-    return { translations, b64, mimeType, cached: true };
+    // b64는 캐시하지 않음 (메모리 절약) — 캐시 히트 시 content.js가 이미 canvas를 가지고 있음
+    const { translations } = cache.get(cacheKey);
+    return { translations, cached: true };
   }
 
   const apiKey = await getApiKey();
@@ -216,7 +216,8 @@ async function handleTranslate(msg) {
   }
 
   if (Array.isArray(translations)) {
-    cacheSet(cacheKey, { translations, b64: renderB64, mimeType: renderMime });
+    // 번역 결과만 캐시 (b64는 제외 — 이미지당 수백KB이므로 메모리 압박 방지)
+    cacheSet(cacheKey, { translations });
   }
 
   return {
