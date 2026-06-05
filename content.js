@@ -202,7 +202,8 @@ function getKey(el) {
 
 async function processElement(el) {
   if (!isActive || !isEligibleElement(el)) return;
-  if (el.style.display === 'none') return; // already replaced
+  if (el.style.display === 'none') return;  // 숨겨진 원본 img
+  if (el.dataset.mangaCanvas) return;        // 우리가 만든 캔버스 재처리 방지
 
   const key = getKey(el);
   if (!key || processedKeys.has(key)) return;
@@ -238,6 +239,7 @@ async function processElement(el) {
 // ─── Observers ────────────────────────────────────────────────────────────────
 
 function tryObserve(el) {
+  if (el.dataset.mangaCanvas) return;  // 우리가 만든 캔버스는 관찰 제외
   if (!isEligibleElement(el)) return;
   if (el.tagName === 'IMG' && !el.complete) {
     el.addEventListener('load', () => {
