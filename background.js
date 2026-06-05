@@ -106,15 +106,32 @@ async function blobToB64(blob) {
   });
 }
 
+// 동시 inpaint 요청을 순차 처리 (CPU 모드에서 큐 폭발 방지)
+let inpaintChain = Promise.resolve();
+
 async function runInpaint(b64, mimeType, translations, serverUrl) {
-  const maskBlob = await createMaskBlob(b64, mimeType, translations);
+  const result = inpaintChain.then(() => _doInpaint(b64, mimeType, translations, serverUrl));
+  // 체인이 실패해도 다음 요청은 진행되도록 catch로 끊어줌
+  inpaintChain = result.catch(() => {});
+  return result;
+}
+
+async function _doInpaint(b64, mimeType, translations, serverUrl) {
+  // 1024px로 리사이즈 후 전송 → crop 전략 대신 resize 전략 사용 가능 → 크게 빨라짐
+  const { b64: smallB64, mimeType: smallMime } = await resizeForGemini(b64, mimeType, 1024);
+
+  const maskBlob = await createMaskBlob(smallB64, smallMime, translations);
   const maskB64  = await blobToB64(maskBlob);
 
-  // iopaint expects JSON body with base64-encoded image/mask strings
   const res = await fetch(`${serverUrl}/api/v1/inpaint`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: b64, mask: maskB64 }),
+    body: JSON.stringify({
+      image: smallB64,
+      mask:  maskB64,
+      hd_strategy: 'Resize',             // crop보다 빠름
+      hd_strategy_resize_limit: 1024,
+    }),
   });
 
   if (!res.ok) throw new Error(`Inpaint ${res.status}: ${await res.text().catch(() => '')}`);
