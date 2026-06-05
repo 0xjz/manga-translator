@@ -101,6 +101,8 @@ async function renderWithCanvas(el, translations, b64, mimeType) {
 
   // CSS: behave exactly like the original img (auto aspect-ratio via canvas intrinsic size)
   canvas.style.cssText = `max-width:100%;height:auto;display:${getComputedStyle(el).display || 'block'};`;
+  // data attribute 세팅 후 DOM 삽입 → MutationObserver가 감지해도 guard에서 차단됨
+  canvas.dataset.mangaCanvas = '1';
 
   el.insertAdjacentElement('beforebegin', canvas);
   el.style.display = 'none';
@@ -203,7 +205,8 @@ function getKey(el) {
 async function processElement(el) {
   if (!isActive || !isEligibleElement(el)) return;
   if (el.style.display === 'none') return;  // 숨겨진 원본 img
-  if (el.dataset.mangaCanvas) return;        // 우리가 만든 캔버스 재처리 방지
+  if (el.dataset.mangaCanvas) return;        // 우리가 만든 캔버스
+  if (el.dataset.mangaDone) return;          // 이미 번역 완료된 원본 img
 
   const key = getKey(el);
   if (!key || processedKeys.has(key)) return;
