@@ -11,6 +11,8 @@ const processedKeys = new Set();
 const elementCanvases = new WeakMap();
 // canvas element -> key (canvas를 수정하지 않고 식별하기 위한 WeakMap)
 const canvasKeys = new WeakMap();
+// canvas element -> version number (페이지 이동 중 stale 응답 폐기용)
+const canvasVersions = new WeakMap();
 
 function getCanvasKey(el) {
   if (!canvasKeys.has(el)) canvasKeys.set(el, `canvas::${crypto.randomUUID().slice(0, 8)}`);
@@ -283,17 +285,20 @@ function renderCanvasOverlay(sourceCanvas, translations) {
 
 async function processCanvasElement(canvas) {
   if (!isActive) return;
-  if (canvas.dataset.mangaCanvas) return; // 우리가 만든 overlay
+  if (canvas.dataset.mangaCanvas) return;
 
   const key = getCanvasKey(canvas);
   if (processedKeys.has(key)) return;
   processedKeys.add(key);
 
+  // 버전 토큰: 응답 대기 중 canvas가 새 페이지로 교체되면 stale 응답을 폐기
+  const version = (canvasVersions.get(canvas) || 0) + 1;
+  canvasVersions.set(canvas, version);
+
   let b64;
   try {
     b64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
   } catch {
-    // CORS로 tainted된 canvas — 읽기 불가
     processedKeys.delete(key);
     return;
   }
@@ -301,8 +306,10 @@ async function processCanvasElement(canvas) {
   try {
     const res = await chrome.runtime.sendMessage({
       type: 'TRANSLATE_B64', b64, mimeType: 'image/jpeg', src: key,
-      overlayMode: true, // iopaint 생략 요청
+      overlayMode: true,
     });
+    // 응답 오는 사이 페이지가 바뀌었으면 버림
+    if (canvasVersions.get(canvas) !== version) return;
     if (res?.translations?.length) {
       renderCanvasOverlay(canvas, res.translations);
     }
