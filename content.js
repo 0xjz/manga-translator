@@ -73,8 +73,7 @@ async function renderWithCanvas(el, translations, b64, mimeType) {
     const bw = ((xmax - xmin) / 1000) * nw;
     const bh = ((ymax - ymin) / 1000) * nh;
 
-    // Detect orientation: tall & narrow → vertical (세로쓰기)
-    const isVertical = bh > bw * 1.2;
+    const isVertical = false; // 항상 가로 출력
     const fontSize   = fitFontSize(ctx, text, bw, bh, isVertical);
     ctx.font          = `${fontSize}px "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif`;
     ctx.letterSpacing = '-0.3px';
