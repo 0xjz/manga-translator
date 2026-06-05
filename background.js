@@ -97,30 +97,30 @@ async function createMaskBlob(b64, mimeType, translations) {
   return oc.convertToBlob({ type: 'image/png' });
 }
 
-async function runInpaint(b64, mimeType, translations, serverUrl) {
-  const [imageBlob, maskBlob] = await Promise.all([
-    (await fetch(`data:${mimeType};base64,${b64}`)).blob(),
-    createMaskBlob(b64, mimeType, translations),
-  ]);
-
-  const form = new FormData();
-  form.append('image', imageBlob, 'image.png');
-  form.append('mask',  maskBlob,  'mask.png');
-
-  const res = await fetch(`${serverUrl}/api/v1/inpaint`, {
-    method: 'POST',
-    body: form,
-  });
-
-  if (!res.ok) throw new Error(`Inpaint server ${res.status}: ${await res.text().catch(() => '')}`);
-
-  const resultBlob = await res.blob();
+async function blobToB64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload  = () => resolve({ b64: reader.result.split(',')[1], mimeType: 'image/png' });
+    reader.onload  = () => resolve(reader.result.split(',')[1]);
     reader.onerror = reject;
-    reader.readAsDataURL(resultBlob);
+    reader.readAsDataURL(blob);
   });
+}
+
+async function runInpaint(b64, mimeType, translations, serverUrl) {
+  const maskBlob = await createMaskBlob(b64, mimeType, translations);
+  const maskB64  = await blobToB64(maskBlob);
+
+  // iopaint expects JSON body with base64-encoded image/mask strings
+  const res = await fetch(`${serverUrl}/api/v1/inpaint`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: b64, mask: maskB64 }),
+  });
+
+  if (!res.ok) throw new Error(`Inpaint ${res.status}: ${await res.text().catch(() => '')}`);
+
+  const resultBlob = await res.blob();
+  return { b64: await blobToB64(resultBlob), mimeType: 'image/png' };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

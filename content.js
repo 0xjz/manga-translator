@@ -246,25 +246,45 @@ async function processElement(el) {
   processedKeys.add(key);
 
   let localB64 = null;
+  let localMime = 'image/jpeg';
   let msg;
 
   if (el.tagName === 'CANVAS') {
     try {
-      localB64 = el.toDataURL('image/jpeg', 0.85).split(',')[1];
-      msg = { type: 'TRANSLATE_B64', b64: localB64, mimeType: 'image/jpeg', src: key };
+      localB64  = el.toDataURL('image/jpeg', 0.85).split(',')[1];
+      localMime = 'image/jpeg';
     } catch {
       processedKeys.delete(key);
       return;
     }
   } else {
-    msg = { type: 'TRANSLATE_URL', src: key };
+    // content script 컨텍스트에서 fetch → 페이지 쿠키·Referer 포함
+    // 서비스 워커에서 fetch하면 CDN 인증 문제로 3~4번째 이미지부터 실패할 수 있음
+    try {
+      const res = await fetch(key);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      localMime = blob.type || 'image/jpeg';
+      localB64  = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      processedKeys.delete(key);
+      return;
+    }
   }
+
+  msg = { type: 'TRANSLATE_B64', b64: localB64, mimeType: localMime, src: key };
 
   try {
     const res = await chrome.runtime.sendMessage(msg);
     if (res?.translations?.length) {
+      // b64는 background가 inpaint 처리 후 돌려주거나, 없으면 직접 fetch한 원본 사용
       const b64      = res.b64      ?? localB64;
-      const mimeType = res.mimeType ?? 'image/jpeg';
+      const mimeType = res.mimeType ?? localMime;
       if (b64) await renderWithCanvas(el, res.translations, b64, mimeType);
     }
   } catch {
