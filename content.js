@@ -13,22 +13,16 @@ const elementCanvases = new WeakMap();
 // ─── Size filter ──────────────────────────────────────────────────────────────
 
 function isEligibleElement(el) {
-  let w, h;
-  if (el.tagName === 'IMG') {
-    // 화면에 실제로 표시되는 크기가 작으면 로고/썸네일로 판단해 제외
-    const dw = el.offsetWidth;
-    const dh = el.offsetHeight;
-    if (dw > 0 && dw < 300) return false;
-    if (dh > 0 && dh < 300) return false;
+  if (el.tagName !== 'IMG') return false;
 
-    w = el.naturalWidth  || dw;
-    h = el.naturalHeight || dh;
-  } else if (el.tagName === 'CANVAS') {
-    w = el.width;
-    h = el.height;
-  } else {
-    return false;
-  }
+  // 화면에 실제로 표시되는 크기가 작으면 로고/썸네일로 판단해 제외
+  const dw = el.offsetWidth;
+  const dh = el.offsetHeight;
+  if (dw > 0 && dw < 300) return false;
+  if (dh > 0 && dh < 300) return false;
+
+  const w = el.naturalWidth  || dw;
+  const h = el.naturalHeight || dh;
   return (w >= 500 && h >= 500) || w * h >= 250_000;
 }
 
@@ -245,47 +239,13 @@ async function processElement(el) {
   if (!key || processedKeys.has(key)) return;
   processedKeys.add(key);
 
-  let localB64 = null;
-  let localMime = 'image/jpeg';
-  let msg;
-
-  if (el.tagName === 'CANVAS') {
-    try {
-      localB64  = el.toDataURL('image/jpeg', 0.85).split(',')[1];
-      localMime = 'image/jpeg';
-    } catch {
-      processedKeys.delete(key);
-      return;
-    }
-  } else {
-    // content script 컨텍스트에서 fetch → 페이지 쿠키·Referer 포함
-    // 서비스 워커에서 fetch하면 CDN 인증 문제로 3~4번째 이미지부터 실패할 수 있음
-    try {
-      const res = await fetch(key);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      localMime = blob.type || 'image/jpeg';
-      localB64  = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload  = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    } catch {
-      processedKeys.delete(key);
-      return;
-    }
-  }
-
-  msg = { type: 'TRANSLATE_B64', b64: localB64, mimeType: localMime, src: key };
+  // URL을 service worker로 전달 — service worker가 이미지 fetch + Gemini 호출
+  const msg = { type: 'TRANSLATE_URL', src: key };
 
   try {
     const res = await chrome.runtime.sendMessage(msg);
-    if (res?.translations?.length) {
-      // b64는 background가 inpaint 처리 후 돌려주거나, 없으면 직접 fetch한 원본 사용
-      const b64      = res.b64      ?? localB64;
-      const mimeType = res.mimeType ?? localMime;
-      if (b64) await renderWithCanvas(el, res.translations, b64, mimeType);
+    if (res?.translations?.length && res.b64) {
+      await renderWithCanvas(el, res.translations, res.b64, res.mimeType ?? 'image/jpeg');
     }
   } catch {
     processedKeys.delete(key);
@@ -312,14 +272,15 @@ function setupObservers() {
     { rootMargin: '300px 0px', threshold: 0.01 }
   );
 
-  document.querySelectorAll('img, canvas').forEach(tryObserve);
+  // canvas는 제외 — 망가 리더가 자체 렌더링에 canvas를 쓰는 경우 extension이 숨기면 사이트가 깨짐
+  document.querySelectorAll('img').forEach(tryObserve);
 
   mutationObserver = new MutationObserver(mutations => {
     for (const m of mutations) {
       for (const node of m.addedNodes) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
-        if (node.matches('img, canvas')) tryObserve(node);
-        node.querySelectorAll?.('img, canvas').forEach(tryObserve);
+        if (node.matches('img')) tryObserve(node);
+        node.querySelectorAll?.('img').forEach(tryObserve);
       }
     }
   });
