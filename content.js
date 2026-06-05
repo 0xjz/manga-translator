@@ -359,8 +359,12 @@ function setupObservers() {
     { rootMargin: '300px 0px', threshold: 0.01 }
   );
 
-  // canvas는 제외 — 망가 리더가 자체 렌더링에 canvas를 쓰는 경우 extension이 숨기면 사이트가 깨짐
   document.querySelectorAll('img').forEach(tryObserve);
+
+  // 활성화 시점에 이미 mode-loaded 상태인 페이지도 즉시 처리
+  document.querySelectorAll('.mode-loaded, .loaded').forEach(el => {
+    el.querySelectorAll('canvas:not([data-manga-canvas])').forEach(processCanvasElement);
+  });
 
   mutationObserver = new MutationObserver(mutations => {
     for (const m of mutations) {
@@ -376,7 +380,12 @@ function setupObservers() {
       if (m.type === 'attributes' && m.attributeName === 'class') {
         const el = m.target;
         if (el.classList.contains('mode-loaded') || el.classList.contains('loaded')) {
-          el.querySelectorAll('canvas:not([data-manga-canvas])').forEach(processCanvasElement);
+          el.querySelectorAll('canvas:not([data-manga-canvas])').forEach(canvas => {
+            // 같은 canvas 요소가 재사용될 때(페이지 이동)도 재처리하도록 키 초기화
+            processedKeys.delete(getCanvasKey(canvas));
+            canvas.parentElement?.querySelectorAll('.manga-overlay').forEach(o => o.remove());
+            processCanvasElement(canvas);
+          });
         }
       }
     }
