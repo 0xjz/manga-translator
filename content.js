@@ -232,16 +232,21 @@ function renderCanvasOverlay(sourceCanvas, translations) {
   // 기존 overlay 제거
   sourceCanvas.parentElement?.querySelectorAll('.manga-overlay').forEach(o => o.remove());
 
+  // source canvas의 실제 렌더링 크기를 overlay 버퍼로 사용 → 좌표 1:1 대응
+  const dw = sourceCanvas.offsetWidth  || sourceCanvas.width;
+  const dh = sourceCanvas.offsetHeight || sourceCanvas.height;
+
   const overlay = document.createElement('canvas');
   overlay.className   = 'manga-canvas manga-overlay';
   overlay.dataset.mangaCanvas = '1';
-  overlay.width       = sourceCanvas.width;
-  overlay.height      = sourceCanvas.height;
-  overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;';
+  overlay.width  = dw;
+  overlay.height = dh;
+  // offsetLeft/offsetTop 으로 source canvas 위에 정확히 위치
+  overlay.style.cssText = `position:absolute;left:${sourceCanvas.offsetLeft}px;top:${sourceCanvas.offsetTop}px;width:${dw}px;height:${dh}px;pointer-events:none;z-index:10;`;
 
   const ctx = overlay.getContext('2d');
-  const nw  = sourceCanvas.width;
-  const nh  = sourceCanvas.height;
+  const nw  = dw;
+  const nh  = dh;
 
   for (const { box_2d, text } of translations) {
     const [ymin, xmin, ymax, xmax] = box_2d;
